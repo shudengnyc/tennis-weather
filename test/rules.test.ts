@@ -91,3 +91,14 @@ describe("updateText", () => {
     expect(updateText(morning, day((h) => (h === 18 ? { gust: 50, aqi: 130 } : h === 15 ? { rainMm: 1 } : {})), 17, C))
       .toBe("🔔 天气更新：风变大了（阵风 50km/h），空气差（AQI 130），刚下过雨，场地可能湿"));
 });
+
+describe("a daytime group (Whisman: 11–14, no evening, no sunset)", () => {
+  const W: WeatherConfig = { ...C, from: 11, to: 14, evening: null, sunset: false };
+  it("just the sky and the high", () => expect(fullText(day((h) => (h === 13 ? { temp: 21 } : {})), 9, W)).toBe("☀️ 早上好！今天晴，最高 21°C/70°F（下午1点）"));
+  it("cold by the high, without 晚上", () =>
+    expect(fullText(day(() => ({ temp: 11 })), 9, W)).toBe("🥶 早上好！今天晴，最高 11°C/52°F（上午11点），冷，带件外套"));
+  it("rain to the end of the window, wind, wet", () =>
+    expect(fullText(day((h) => (h >= 13 ? { rainProb: 60 } : h === 12 ? { gust: 45 } : h === -2 ? { rainMm: 1 } : {})), 9, W))
+      .toBe("🌧 早上好！今天晴，最高 18°C/64°F（上午11点），13点起可能有雨，风大（阵风 45km/h），夜里下过雨，场地可能湿"));
+});
+

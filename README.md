@@ -17,9 +17,10 @@ const update = updateText(lastFacts, f, hour, config); // 12:00 / 17:00: only wh
   风大 with the gust (≥ `wind` / `gust`) or 有点风 (gusts ≥ `breezy`, default 28), 空气差 with the AQI, 场地可能湿 (rain in the
   last `wetHours`, default 12, so last night counts at 07:00), 晚上冷，带件外套 (`evening` temp ≤ `cold`, default 12).
 - Icon: 🌧 rain, 🌦 小雨, 😷 air, 💨 wind, 🥵 hot, 🥶 cold, else the sky (☀️ ⛅ ☁️ 🌫).
+- A daytime group sets `evening: null, sunset: false`: just the sky and the high (「☀️ 早上好！今天晴，最高 21°C/70°F（下午1点）」), and 冷 goes by the high.
 - Two small requests per check (~5 KB forecast + ~3 KB air), 4 s timeout each, no key.
 - The caller owns the schedule and remembers the facts of what it last posted.
 - Used by 找场 (shudengnyc/zhaochang) and 约球 Whisman. `dist/` is committed so apps install straight from GitHub:
-  `"tennis-weather": "github:shudengnyc/tennis-weather#v0.2.0"`.
+  `"tennis-weather": "github:shudengnyc/tennis-weather#v0.2.1"`.
 
 Change: edit `src/`, `npm run check`, `npm run build`, commit `dist/`, tag `vX.Y.Z`, bump the tag in each app.

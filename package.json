@@ -1,6 +1,6 @@
 {
   "name": "tennis-weather",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "打球天气: one line of playing weather for a place and time window (Open-Meteo), plus what changed since the last line.",
   "license": "MIT",
   "type": "module",

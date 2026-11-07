@@ -74,24 +74,24 @@ export function fullText(f: Forecast, now: number, c: WeatherConfig): string {
   const left = f.hours.filter((h) => ahead(h, now, c));
   if (!left.length) return "";
   const top = left.reduce((a, h) => (h.temp > a.temp ? h : a));
-  const eveHour = Math.min(c.evening ?? EVENING, c.to);
-  const eve = f.hours.find((h) => h.hour === eveHour) ?? left[left.length - 1];
-  const cold = eve.temp <= (c.cold ?? COLD);
+  const eveHour = c.evening === null ? null : Math.min(c.evening ?? EVENING, c.to);
+  const eve = eveHour === null ? null : f.hours.find((h) => h.hour === eveHour) ?? left[left.length - 1];
+  const cold = (eve ?? top).temp <= (c.cold ?? COLD);
   const gust = gustOf(left), breezy = !facts.windy && gust >= (c.breezy ?? BREEZY);
   const shower = facts.shower ?? [];
   const s = sky(left);
   const icon = facts.rain.length ? "🌧" : shower.length ? "🌦" : facts.air ? "😷" : facts.windy ? "💨" : top.temp >= c.hot ? "🥵" : cold ? "🥶" : s.icon;
-  const sunset = ampm(f.sunset);
+  const sunset = c.sunset === false ? "" : ampm(f.sunset);
   const bits = [
     facts.rain.length ? rainWords(left, c.rainProb, Infinity, c, "可能有雨") : "",
     shower.length ? rainWords(left, c.showerProb, c.rainProb, c, `可能有小雨（${showerChance(left, c)}%）`) : "",
     facts.windy ? `风大（阵风 ${gust}km/h）` : breezy ? "有点风" : "",
     facts.air ? airWords(facts.air, aqiOf(left)) : "",
     facts.wet ? (now < c.from ? "夜里下过雨，场地可能湿" : "刚下过雨，场地可能湿") : "",
-    cold ? "晚上冷，带件外套" : "",
+    cold ? (eve && eve.hour >= 17 ? "晚上冷，带件外套" : "冷，带件外套") : "",
   ].filter(Boolean);
-  return `${icon} ${now < c.from ? "早上好！今天" : "今天打球："}${s.word}，最高 ${temp(top.temp)}（${clock(top.hour)}），` +
-    `${clock(eve.hour)} ${temp(eve.temp)}` + (sunset ? `，日落 ${sunset}` : "") + bits.map((b) => `，${b}`).join("");
+  return `${icon} ${now < c.from ? "早上好！今天" : "今天打球："}${s.word}，最高 ${temp(top.temp)}（${clock(top.hour)}）` + (eve ? "，" : "") +
+    (eve ? `${clock(eve.hour)} ${temp(eve.temp)}` : "") + (sunset ? `，日落 ${sunset}` : "") + bits.map((b) => `，${b}`).join("");
 }
 
 /** 12:00 / 17:00: only what changed since the last post, for the part of the window still ahead; null = say nothing. */
