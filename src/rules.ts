@@ -3,7 +3,8 @@ import type { WeatherConfig } from "./config.js";
 /** One local hour, already the worse of all points (wettest, windiest, worst air, hottest). */
 /** sky: WMO weather code (0–1 clear, 2 partly cloudy, 3 overcast, 45/48 fog, higher = some precipitation). */
 export interface Hour { hour: number; temp: number; rainProb: number; rainMm: number; wind: number; gust: number; aqi: number | null; sky: number }
-export interface Forecast { hours: Hour[]; sunset: string } // sunset "HH:MM" local
+/** hours: today 0–23, plus yesterday as -24…-1 when the source has them (for wet courts). sunset "HH:MM" local. */
+export interface Forecast { hours: Hour[]; sunset: string }
 /** What a post said, kept on the delivery row so 12:00 and 17:00 only speak when it changed. */
 /** shower: parts with a 30–49% hour (not already rain); missing on rows from before it existed = none. */
 export interface Facts { rain: Part[]; shower?: Part[]; windy: boolean; air: 0 | 1 | 2; wet: boolean }
@@ -13,11 +14,14 @@ const PARTS: Part[] = ["上午", "下午", "晚上"];
 const partOf = (h: number): Part => (h < 12 ? "上午" : h < 17 ? "下午" : "晚上");
 const ahead = (h: Hour, now: number, c: WeatherConfig) => h.hour >= Math.max(c.from, now) && h.hour <= c.to;
 
+const COLD = 12, EVENING = 20, BREEZY = 28, WET_HOURS = 12;
+
 /** The rest of today's playing window, from the current hour. Pure. */
 export function factsFor(f: Forecast, now: number, c: WeatherConfig): Facts {
   const left = f.hours.filter((h) => ahead(h, now, c));
   const aqi = Math.max(0, ...left.map((h) => h.aqi ?? 0));
-  const past = f.hours.filter((h) => h.hour < now && h.hour >= now - 3).reduce((n, h) => n + h.rainMm, 0);
+  const back = c.wetHours ?? WET_HOURS;
+  const past = f.hours.filter((h) => h.hour < now && h.hour >= now - back).reduce((n, h) => n + h.rainMm, 0);
   const rain = PARTS.filter((p) => left.some((h) => h.rainProb >= c.rainProb && partOf(h.hour) === p));
   return {
     rain,
@@ -28,46 +32,85 @@ export function factsFor(f: Forecast, now: number, c: WeatherConfig): Facts {
   };
 }
 
-const rainWords = (p: Part[]) => (p.length === 3 ? "全天" : p.join("、"));
-const AIR = ["", "空气差", "空气很差，不建议户外"];
-const showerChance = (left: Hour[], c: WeatherConfig) => Math.max(...left.map((h) => (h.rainProb < c.rainProb ? h.rainProb : 0)));
-/** The sky most of the window: ☀️ clear, ⛅ partly cloudy, ☁️ overcast (fog and drizzle codes count as overcast). */
-function skyIcon(left: Hour[]): string {
-  const n = [0, 0, 0];
-  for (const h of left) n[h.sky <= 1 ? 0 : h.sky === 2 ? 1 : 2]++;
-  return ["☀️", "⛅", "☁️"][n.indexOf(Math.max(...n))];
+/** Rain hours as words: [14,15,16] → 「14–17点」; a run reaching the end of the window → 「19点起」. */
+function span(hours: number[], c: WeatherConfig): string {
+  const runs: [number, number][] = [];
+  for (const h of hours) { const r = runs[runs.length - 1]; if (r && h === r[1]) r[1] = h + 1; else runs.push([h, h + 1]); }
+  return runs.map(([a, b]) => (b > c.to ? `${a}点起` : `${a}–${b}点`)).join("、");
 }
+/** 「14–17点可能有雨，之后停」: the hours at or above `min`, and whether it clears before the window ends. */
+function rainWords(left: Hour[], min: number, max: number, c: WeatherConfig, what: string): string {
+  const hs = left.filter((h) => h.rainProb >= min && h.rainProb < max).map((h) => h.hour);
+  if (!hs.length) return "";
+  return `${span(hs, c)}${what}` + (hs[hs.length - 1] < c.to ? "，之后停" : "");
+}
+const showerChance = (left: Hour[], c: WeatherConfig) => Math.max(...left.map((h) => (h.rainProb < c.rainProb ? h.rainProb : 0)));
+/** 11 → 上午11点, 12 → 中午12点, 14 → 下午2点, 20 → 晚上8点. */
+const clock = (h: number) => (h < 12 ? `上午${h}点` : h === 12 ? "中午12点" : h < 18 ? `下午${h - 12}点` : `晚上${h - 12}点`);
+const temp = (t: number) => `${Math.round(t)}°C/${Math.round(t * 9 / 5 + 32)}°F`;
+/** "17:03" → "5:03PM". */
+function ampm(hm: string): string {
+  const [h, m] = hm.split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? `${h % 12 || 12}:${String(m).padStart(2, "0")}${h < 12 ? "AM" : "PM"}` : "";
+}
+/** The sky most of the window: 晴 ☀️, 多云 ⛅, 阴 ☁️, 有雾 🌫 (drizzle and rain codes count as 阴; rain has its own words). */
+function sky(left: Hour[]): { word: string; icon: string } {
+  const n = [0, 0, 0, 0];
+  for (const h of left) n[h.sky <= 1 ? 0 : h.sky === 2 ? 1 : h.sky === 45 || h.sky === 48 ? 3 : 2]++;
+  const i = n.indexOf(Math.max(...n));
+  return { word: ["晴", "多云", "阴", "有雾"][i], icon: ["☀️", "⛅", "☁️", "🌫"][i] };
+}
+/** The strongest wind of the window, gust or sustained (gusts are normally the higher). */
+const gustOf = (left: Hour[]) => Math.round(Math.max(0, ...left.map((h) => Math.max(h.gust, h.wind))));
+const aqiOf = (left: Hour[]) => Math.max(0, ...left.map((h) => h.aqi ?? 0));
+const airWords = (air: number, aqi: number) => ["", `空气差（AQI ${aqi}）`, `空气很差（AQI ${aqi}），不建议户外`][air];
 
-/** The full line: 07:00, or a catch-up at 12:00 / 17:00 when nothing went out earlier. Pure. */
+/**
+ * The full line: 07:00, or a catch-up at 12:00 / 17:00 when nothing went out earlier. Pure.
+ * 「☀️ 早上好！今天晴，最高 22°C/71°F（下午2点），晚上8点 13°C/56°F，日落 5:03PM」, then only what is worth a word.
+ */
 export function fullText(f: Forecast, now: number, c: WeatherConfig): string {
   const facts = factsFor(f, now, c);
   const left = f.hours.filter((h) => ahead(h, now, c));
   if (!left.length) return "";
-  const high = Math.round(Math.max(...left.map((h) => h.temp)));
-  const eve = Math.round(left[left.length - 1].temp);
+  const top = left.reduce((a, h) => (h.temp > a.temp ? h : a));
+  const eveHour = Math.min(c.evening ?? EVENING, c.to);
+  const eve = f.hours.find((h) => h.hour === eveHour) ?? left[left.length - 1];
+  const cold = eve.temp <= (c.cold ?? COLD);
+  const gust = gustOf(left), breezy = !facts.windy && gust >= (c.breezy ?? BREEZY);
   const shower = facts.shower ?? [];
-  const icon = facts.rain.length ? "🌧" : shower.length ? "🌦" : facts.air ? "😷" : facts.windy ? "💨" : high >= c.hot ? "🥵" : skyIcon(left);
-  return `${icon} ${now < c.from ? "早上好！今天" : "今天打球："}最高 ${high}°，晚上 ${eve}°，日落 ${f.sunset}` +
-    (facts.rain.length ? `，${rainWords(facts.rain)}可能有雨` : "") +
-    (shower.length ? `，${rainWords(shower)}可能有小雨（${showerChance(left, c)}%）` : "") +
-    (facts.windy ? "，风大" : "") + (facts.air ? `，${AIR[facts.air]}` : "") + (facts.wet ? "，场地可能湿" : "");
+  const s = sky(left);
+  const icon = facts.rain.length ? "🌧" : shower.length ? "🌦" : facts.air ? "😷" : facts.windy ? "💨" : top.temp >= c.hot ? "🥵" : cold ? "🥶" : s.icon;
+  const sunset = ampm(f.sunset);
+  const bits = [
+    facts.rain.length ? rainWords(left, c.rainProb, Infinity, c, "可能有雨") : "",
+    shower.length ? rainWords(left, c.showerProb, c.rainProb, c, `可能有小雨（${showerChance(left, c)}%）`) : "",
+    facts.windy ? `风大（阵风 ${gust}km/h）` : breezy ? "有点风" : "",
+    facts.air ? airWords(facts.air, aqiOf(left)) : "",
+    facts.wet ? (now < c.from ? "夜里下过雨，场地可能湿" : "刚下过雨，场地可能湿") : "",
+    cold ? "晚上冷，带件外套" : "",
+  ].filter(Boolean);
+  return `${icon} ${now < c.from ? "早上好！今天" : "今天打球："}${s.word}，最高 ${temp(top.temp)}（${clock(top.hour)}），` +
+    `${clock(eve.hour)} ${temp(eve.temp)}` + (sunset ? `，日落 ${sunset}` : "") + bits.map((b) => `，${b}`).join("");
 }
 
 /** 12:00 / 17:00: only what changed since the last post, for the part of the window still ahead; null = say nothing. */
 export function updateText(prev: Facts, f: Forecast, now: number, c: WeatherConfig): string | null {
   const cur = factsFor(f, now, c);
+  const left = f.hours.filter((h) => ahead(h, now, c));
   const stillAhead = (p: Part) => PARTS.indexOf(p) >= PARTS.indexOf(partOf(Math.max(c.from, now)));
   const before = prev.rain.filter(stillAhead);
+  const rainNow = rainWords(left, c.rainProb, Infinity, c, "可能有雨");
   const said: string[] = [];
-  if (!before.length && cur.rain.length) said.push(`${rainWords(cur.rain)}可能有雨`);
+  if (!before.length && cur.rain.length) said.push(rainNow);
   else if (before.length && !cur.rain.length) said.push("之后不太会下雨了");
-  else if (before.join() !== cur.rain.join()) said.push(`雨改到${rainWords(cur.rain)}`);
+  else if (before.join() !== cur.rain.join()) said.push(`雨改了：${rainNow}`);
   // A new 30–49% chance is worth a word; one fading away is not.
   const showerBefore = (prev.shower ?? []).filter(stillAhead), showerNow = cur.shower ?? [];
   if (!cur.rain.length && !before.length && showerNow.some((p) => !showerBefore.includes(p)))
-    said.push(`${rainWords(showerNow)}可能有小雨（${showerChance(f.hours.filter((h) => ahead(h, now, c)), c)}%）`);
-  if (cur.windy !== prev.windy) said.push(cur.windy ? "风变大了" : "风小了");
-  if (cur.air > prev.air) said.push(AIR[cur.air]);
+    said.push(rainWords(left, c.showerProb, c.rainProb, c, `可能有小雨（${showerChance(left, c)}%）`));
+  if (cur.windy !== prev.windy) said.push(cur.windy ? `风变大了（阵风 ${gustOf(left)}km/h）` : "风小了");
+  if (cur.air > prev.air) said.push(airWords(cur.air, aqiOf(left)));
   else if (cur.air < prev.air) said.push(cur.air ? "空气好一点了" : "空气好转了");
   if (cur.wet && !prev.wet) said.push("刚下过雨，场地可能湿");
   return said.length ? `🔔 天气更新：${said.join("，")}` : null;

@@ -14,9 +14,12 @@ async function getOnce(url) {
         return null;
     }
 }
-/** Today's hours for every point in one forecast call (+ one air-quality call), merged to the worst. null = no forecast. */
+/**
+ * Yesterday's and today's hours for every point in one forecast call (+ one air-quality call), merged to the worst.
+ * Today's hours are 0–23; yesterday's are -24…-1, so rain overnight can still mean wet courts. null = no forecast.
+ */
 export async function fetchForecast(c) {
-    const tzq = `timezone=${encodeURIComponent(c.timezone)}&forecast_days=1`;
+    const tzq = `timezone=${encodeURIComponent(c.timezone)}&past_days=1&forecast_days=1`;
     const lat = c.points.map((p) => p.lat).join(","), lng = c.points.map((p) => p.lng).join(",");
     const [wx, air] = await Promise.all([
         get(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&${tzq}&daily=sunset` +
@@ -25,12 +28,18 @@ export async function fetchForecast(c) {
     ]);
     if (!wx?.every((p) => p.hourly?.time?.length))
         return null;
-    const hours = wx[0].hourly.time.map((t, i) => {
-        const each = (k, src = wx) => (src ?? []).map((p) => Number(p.hourly?.[k]?.[i])).filter(Number.isFinite);
-        const aqi = each("us_aqi", air);
-        return { hour: Number(t.slice(11, 13)), temp: Math.max(...each("temperature_2m")), rainProb: Math.max(0, ...each("precipitation_probability")),
-            rainMm: Math.max(0, ...each("precipitation")), wind: Math.max(0, ...each("wind_speed_10m")), gust: Math.max(0, ...each("wind_gusts_10m")),
+    const times = wx[0].hourly.time;
+    const today = times[times.length - 1].slice(0, 10);
+    const airAt = (t) => (air ?? []).map((p) => { const j = p.hourly?.time?.indexOf(t) ?? -1; return Number(p.hourly?.us_aqi?.[j]); })
+        .filter(Number.isFinite);
+    const hours = times.map((t, i) => {
+        const each = (k) => wx.map((p) => Number(p.hourly?.[k]?.[i])).filter(Number.isFinite);
+        const aqi = airAt(t);
+        return { hour: Number(t.slice(11, 13)) - (t.startsWith(today) ? 0 : 24), temp: Math.max(...each("temperature_2m")),
+            rainProb: Math.max(0, ...each("precipitation_probability")), rainMm: Math.max(0, ...each("precipitation")),
+            wind: Math.max(0, ...each("wind_speed_10m")), gust: Math.max(0, ...each("wind_gusts_10m")),
             aqi: aqi.length ? Math.max(...aqi) : null, sky: Math.max(0, ...each("weather_code")) };
     });
-    return { hours, sunset: String(wx[0].daily?.sunset?.[0] ?? "").slice(11, 16) };
+    const sunsets = (wx[0].daily?.sunset ?? []);
+    return { hours, sunset: String(sunsets.find((s) => s.startsWith(today)) ?? sunsets[sunsets.length - 1] ?? "").slice(11, 16) };
 }

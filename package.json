@@ -1,13 +1,27 @@
 {
   "name": "tennis-weather",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "打球天气: one line of playing weather for a place and time window (Open-Meteo), plus what changed since the last line.",
   "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
-  "scripts": { "build": "tsc -p tsconfig.build.json", "test": "vitest run", "check": "tsc --noEmit && vitest run" },
-  "devDependencies": { "typescript": "^5.9.3", "vitest": "^2.1.9" }
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "check": "tsc --noEmit && vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^2.1.9"
+  }
 }
